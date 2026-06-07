@@ -13,7 +13,41 @@
     <link href="Minesweeper.web.styles.css" rel="stylesheet" />
     <script type="importmap"></script>
 </head>
+<script>
+    window.setupLongPress = function () {
 
+        let timer;
+
+        document.addEventListener("touchstart", function (e) {
+
+            const btn = e.target.closest("button");
+
+            if (!btn || !btn.id.startsWith("cell-"))
+                return;
+
+            timer = setTimeout(() => {
+
+                btn.dispatchEvent(
+                    new MouseEvent("contextmenu",
+                        { bubbles: true }));
+
+            }, 500);
+
+        });
+
+        document.addEventListener("touchend", function () {
+
+            clearTimeout(timer);
+
+        });
+
+        document.addEventListener("touchmove", function () {
+
+            clearTimeout(timer);
+
+        });
+    };
+</script>
 <body>
     <div id="app">
         <svg class="loading-progress">
