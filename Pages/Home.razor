@@ -1,0 +1,394 @@
+﻿@page "/"
+@using Minesweeper.web
+@inject IJSRuntime JS
+@using System.Timers;
+
+<h3>Minesweeper</h3>
+
+<label>難易度：</label>
+
+<select @onchange="DifficultyChanged">
+    <option value="Beginner">初級 (9×9, 10個)</option>
+    <option value="Intermediate">中級 (16×16, 40個)</option>
+    <option value="Expert">上級 (22×22, 99個)</option>
+</select>
+
+<p>
+    サイズ: @boardSize × @boardSize
+</p>
+
+<p>
+    💣 @bombCount
+</p>
+
+<button @onclick="StartGame">Start</button>
+<button @onclick="RestartGame">
+    Restart
+</button>
+
+<p>
+    ⏱️ @elapsedSeconds 秒
+</p>
+
+<p>
+    🏆 ベストタイム:
+    @(bestTime == 0 ? "--" : $"{bestTime}秒")
+</p>
+
+<p>
+    🚩 @flagCount / @bombCount
+</p>
+
+@if (!string.IsNullOrEmpty(message))
+{
+    <div class="alert alert-danger">
+        @message
+    </div>
+}
+
+@if (isNewRecord)
+{
+    <p>🏆 新記録！</p>
+}
+
+@if (displayBoard != null)
+{
+    @for (int row = 0; row < boardSize; row++)
+    {
+        <div style="display:flex">
+            @for (int col = 0; col < boardSize; col++)
+            {
+                int r = row;
+                int c = col;
+
+                <button class="@GetCellClass(r, c)"
+                        disabled="@(opened != null && opened[r, c])"
+                        @onclick="() => OpenCell(r, c)"
+                        @oncontextmenu:preventDefault
+                        @oncontextmenu="() => ToggleFlag(r, c)">
+                        @displayBoard[r, c]
+                </button>
+            }
+        </div>
+    }
+}
+
+@code {
+    private string difficulty = "Beginner";
+    private int boardSize = 9;
+    private string[,]? board;
+    private string[,]? displayBoard;
+    private bool[,]? opened;
+    private bool gameOver;
+    private bool[,]? flagged;
+    private string message = "";
+    private int bombCount = 10;
+    private int flagCount;
+    private Timer? timer;
+    private int elapsedSeconds;
+    private int bestTime;
+    private bool isNewRecord = false;
+    private bool firstClick = true;
+    private string GetCellClass(int row, int col)
+    {
+        if (displayBoard == null)
+        {
+            return "cell";
+        }
+
+        return displayBoard[row, col] switch
+        {
+            "1" => "cell num1",
+            "2" => "cell num2",
+            "3" => "cell num3",
+            "4" => "cell num4",
+            "5" => "cell num5",
+            "6" => "cell num6",
+            "7" => "cell num7",
+            "8" => "cell num8",
+            _ => "cell"
+        };
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadBestTime();
+    }
+    private async Task LoadBestTime()
+    {
+        string? value = await JS.InvokeAsync<string>(
+            "localStorage.getItem",
+            GetBestTimeKey());
+
+        if (int.TryParse(value, out int time))
+        {
+            bestTime = time;
+        }
+        else
+        {
+            bestTime = 0;
+        }
+    }
+
+    private void StartGame()
+    {
+        board = null;
+
+        displayBoard = new string[boardSize, boardSize];
+        opened = new bool[boardSize, boardSize];
+        flagged = new bool[boardSize, boardSize];
+
+        flagCount = 0;
+        gameOver = false;
+        firstClick = true;
+        message = "";
+
+        for (int r = 0; r < boardSize; r++)
+        {
+            for (int c = 0; c < boardSize; c++)
+            {
+                displayBoard[r, c] = "";
+            }
+        }
+        StartTimer();
+    }
+
+    private void OpenCell(int row, int col)
+    {
+
+        if (firstClick)
+        {
+            board = MineSweeper.CreateBoard(boardSize, bombCount, row, col);
+
+            firstClick = false;
+        }
+        if (gameOver)
+        {
+            return;
+        }
+
+        if (board == null || displayBoard == null || opened == null)
+        {
+            return;
+        }
+
+        if (row < 0 || row >= boardSize || col < 0 || col >= boardSize)
+        {
+            return;
+        }
+
+        if (opened[row, col])
+        {
+            return;
+        }
+
+        if (flagged[row, col])
+        {
+            return;
+        }
+        opened[row, col] = true;
+
+        if (board[row, col] == "*")
+        {
+            timer?.Stop();
+            gameOver = true;
+            displayBoard[row, col] = "💣";
+            message = "ゲームオーバー";
+            RevealBombs();
+            return;
+        }
+
+        displayBoard[row, col] = board[row, col] == "0"? "": board[row, col];
+
+        if (board[row, col] != "0")
+        {
+            if (CheckWin())
+            {
+                timer?.Stop();
+
+                _ = SaveBestTime();
+
+                ShowFlagsOnBombs();
+                message = "🎉 ゲームクリア！";
+                gameOver = true;
+            }
+
+            return;
+        }
+
+        for (int r = row - 1; r <= row + 1; r++)
+        {
+            for (int c = col - 1; c <= col + 1; c++)
+            {
+                OpenCell(r, c);
+            }
+        }
+
+        if (CheckWin())
+        {
+            timer?.Stop();
+
+            _ = SaveBestTime();
+
+            ShowFlagsOnBombs();
+            message = "🎉 ゲームクリア！";
+            gameOver = true;
+        }
+    }
+
+    private void ToggleFlag(int row, int col)
+    {
+        if (gameOver)
+        {
+            return;
+        }
+
+        if (displayBoard == null || flagged == null || opened == null)
+        {
+            return;
+        }
+
+        if (opened[row, col])
+        {
+            return;
+        }
+
+        if (flagged[row, col])
+        {
+            flagged[row, col] = false;
+            displayBoard[row, col] = "";
+            flagCount--;
+        }
+        else
+        {
+            flagged[row, col] = true;
+            displayBoard[row, col] = "🚩";
+            flagCount++;
+        }
+    }
+    private bool CheckWin()
+    {
+        if (board == null || opened == null)
+        {
+            return false;
+        }
+
+        for (int row = 0; row < boardSize; row++)
+        {
+            for (int col = 0; col < boardSize; col++)
+            {
+                if (board[row, col] != "*" && !opened[row, col])
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+    private void RevealBombs()
+    {
+        if (board == null || displayBoard == null)
+        {
+            return;
+        }
+
+        for (int row = 0; row < boardSize; row++)
+        {
+            for (int col = 0; col < boardSize; col++)
+            {
+                if (board[row, col] == "*")
+                {
+                    displayBoard[row, col] = "💣";
+                }
+            }
+        }
+    }
+    private async Task DifficultyChanged(ChangeEventArgs e)
+    {
+        timer?.Stop();
+        elapsedSeconds = 0;
+        flagCount = 0;
+        difficulty = e.Value?.ToString() ?? "Beginner";
+
+        switch (difficulty)
+        {
+            case "Beginner":
+                boardSize = 9;
+                bombCount = 10;
+                break;
+
+            case "Intermediate":
+                boardSize = 16;
+                bombCount = 40;
+                break;
+
+            case "Expert":
+                boardSize = 22;
+                bombCount = 99;
+                break;
+        }
+        displayBoard = null;
+        board = null;
+        opened = null;
+        flagged = null;
+        message = "";
+        await LoadBestTime();
+    }
+    private void ShowFlagsOnBombs()
+    {
+        if (board == null || displayBoard == null)
+        {
+            return;
+        }
+
+        for (int row = 0; row < boardSize; row++)
+        {
+            for (int col = 0; col < boardSize; col++)
+            {
+                if (board[row, col] == "*")
+                {
+                    displayBoard[row, col] = "🚩";
+                }
+            }
+        }
+    }
+    private void RestartGame()
+    {
+        StartGame();
+    }
+    private void StartTimer()
+    {
+        timer?.Dispose();
+
+        elapsedSeconds = 0;
+
+        timer = new Timer(1000);
+
+        timer.Elapsed += (_, _) =>
+        {
+            elapsedSeconds++;
+
+            InvokeAsync(StateHasChanged);
+        };
+
+        timer.Start();
+    }
+    private async Task SaveBestTime()
+    {
+        if (bestTime == 0 || elapsedSeconds < bestTime)
+        {
+            bestTime = elapsedSeconds;
+            isNewRecord = true;
+            await JS.InvokeVoidAsync(
+                "localStorage.setItem",
+                GetBestTimeKey(),
+                bestTime.ToString());
+        }
+    }
+    private string GetBestTimeKey()
+    {
+        return $"BestTime_{difficulty}";
+    }
+
+}
