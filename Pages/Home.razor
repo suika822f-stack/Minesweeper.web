@@ -65,6 +65,7 @@
                         disabled="@(opened != null && opened[r, c])"
                         @onclick="() => OpenCell(r, c)"
                         @oncontextmenu:preventDefault
+                        @ondblclick="() => ToggleFlag(r, c)"
                         @oncontextmenu="() => ToggleFlag(r, c)">
                         @displayBoard[r, c]
                 </button>
